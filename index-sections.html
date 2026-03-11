@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Property Analyzer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+  .ring-1 { box-shadow: 0 0 0 1px rgba(229,231,235,1); }
+  .ring-2 { box-shadow: 0 0 0 2px rgba(96,165,250,1); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useMemo, useCallback, useEffect } = React;
+
+const fmt = (v, type = "currency") => {
+  if (v === null || v === undefined || isNaN(v)) return "\u2014";
+  if (type === "currency") return "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (type === "currencyInt") return "$" + Math.round(Number(v)).toLocaleString("en-US");
+  if (type === "pct") return (Number(v) * 100).toFixed(1) + "%";
+  if (type === "pctInt") return Math.round(Number(v) * 100) + "%";
+  if (type === "number") return Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return String(v);
+};
+
+const p = (v) => parseFloat(v) || 0;
+
+const InputField = ({ label, value, onChange, type = "text", prefix, suffix, className = "", small = false }) => (
+  <div className={"flex items-center gap-2 " + className}>
+    {label && <label className={(small ? "text-xs" : "text-sm") + " font-medium text-gray-600 whitespace-nowrap"} style={{minWidth:"140px"}}>{label}</label>}
+    <div className="relative flex-1">
+      {prefix && <span className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm">{prefix}</span>}
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={"w-full border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-blue-400 focus:border-transparent outline-none " + (prefix ? "pl-6 " : "") + (suffix ? "pr-8" : "")}
+      />
+      {suffix && <span className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm">{suffix}</span>}
+    </div>
+  </div>
+);
+
+const Section = ({ title, children, color = "blue", onClear }) => {
+  const colors = { blue: "bg-blue-600", green: "bg-green-600", amber: "bg-yellow-600", red: "bg-red-600", purple: "bg-purple-600", gray: "bg-gray-700", indigo: "bg-indigo-600", teal: "bg-green-500" };
+  return (
+    <div className="mb-4">
+      <div className={(colors[color] || "bg-blue-600") + " text-white text-sm font-bold px-3 py-1 rounded-t flex items-center justify-between"}>
+        <span>{title}</span>
+        {onClear && (
+          <button onClick={(e) => { e.stopPropagation(); onClear(); }} className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-white bg-white bg-opacity-20 border border-white border-opacity-30 rounded hover:bg-opacity-40" style={{cursor:"pointer", transition:"all 0.15s", lineHeight:"1.2"}}>
+            <span style={{fontSize:"10px"}}>{"\u2715"}</span> Clear
+          </button>
+        )}
+      </div>
+      <div className="border border-t-0 border-gray-200 rounded-b bg-white p-3">{children}</div>
+    </div>
+  );
+};
+
+const Row = ({ label, value, bold, highlight, border }) => (
+  <div className={"flex justify-between py-1 px-1 text-sm " + (bold ? "font-bold " : "") + (highlight ? "bg-yellow-50 " : "") + (border ? "border-t border-gray-200 pt-2 mt-1" : "")}>
+    <span className="text-gray-700">{label}</span>
+    <span className={"font-mono " + (p(typeof value === "string" ? value.replace(/[$,%x]/g, "") : value) < 0 ? "text-red-600" : "text-gray-900")}>{value}</span>
+  </div>
+);
+
+const tabsList = [
+  { id: "summary", label: "Summary", icon: "\ud83c\udfe0" },
+  { id: "rentroll", label: "Rent Roll", icon: "\ud83d\udccb" },
+  { id: "analyzer", label: "Analyzer", icon: "\ud83d\udcca" },
+  { id: "buildings", label: "Buildings", icon: "\ud83c\udfe2" },
+  { id: "rehab", label: "Rehab", icon: "\ud83d\udd28" },
+  { id: "amortization", label: "Amortization", icon: "\ud83d\udcc8" },
+  { id: "flipping", label: "Flipping", icon: "\ud83d\udcb0" },
+];
+
+const defaultRehab = {
+  exterior: [
+    { desc: "Roofing Mat'l", qty: "", cost: "" }, { desc: "Gutters", qty: "", cost: "" },
+    { desc: "Siding", qty: "", cost: "" }, { desc: "Windows", qty: "", cost: "" },
+    { desc: "Decking", qty: "", cost: "" }, { desc: "Porches", qty: "", cost: "" },
+    { desc: "Foundation", qty: "", cost: "" }, { desc: "Garage", qty: "", cost: "" },
+  ],
+  kitchen: [
+    { desc: "Sink Cabinet", qty: "", cost: "" }, { desc: "Base Cabinets", qty: "", cost: "" },
+    { desc: "Wall Cabinets", qty: "", cost: "" }, { desc: "Cabinet Hardware", qty: "", cost: "" },
+    { desc: "Countertop", qty: "", cost: "" }, { desc: "Faucet", qty: "", cost: "" },
+    { desc: "Sink", qty: "", cost: "" }, { desc: "Other", qty: "", cost: "" },
+  ],
+  bathroom: [
+    { desc: "Tub Unit", qty: "", cost: "" }, { desc: "Shower Unit", qty: "", cost: "" },
+    { desc: "Commode", qty: "", cost: "" }, { desc: "Vanity & Top", qty: "", cost: "" },
+    { desc: "Faucet", qty: "", cost: "" }, { desc: "Medicine Cabinet", qty: "", cost: "" },
+    { desc: "Towel Bar Set", qty: "", cost: "" }, { desc: "Other", qty: "", cost: "" },
+  ],
+  general: [
+    { desc: "Doors", qty: "", cost: "" }, { desc: "Flooring", qty: "", cost: "" },
+    { desc: "Light Fixtures", qty: "", cost: "" }, { desc: "Crown Molding", qty: "", cost: "" },
+    { desc: "Base Molding", qty: "", cost: "" }, { desc: "Casing", qty: "", cost: "" },
+    { desc: "Drywall", qty: "", cost: "" }, { desc: "Paint", qty: "", cost: "" },
+    { desc: "HVAC", qty: "", cost: "" }, { desc: "Electrical", qty: "", cost: "" },
+    { desc: "Insulation", qty: "", cost: "" }, { desc: "Other 1", qty: "", cost: "" },
+    { desc: "Other 2", qty: "", cost: "" }, { desc: "Other 3", qty: "", cost: "" },
+  ],
+};
+
+const makeRentRoll = () => {
+  const rows = ["Rent", "Taxes", "Insurance", "Utility", "HOA", "Other"];
+  return rows.map((name) => ({ name, b1: "", b2: "", b3: "" }));
+};
+
+const makeBuildings = () => {
+  const fields = ["Address", "PIN#", "Tax Value", "Tax Bill", "Mkt Value", "Style", "Ext. Walls", "Foundation", "Garage", "Finished SF", "Heating", "A/C", "Utility", "Bedrooms", "Full Bath", "Half Bath", "Year Built", "Year Remodeled"];
+  return fields.map((name) => ({ name, b1: "", b2: "", b3: "" }));
+};
+
+function PropertyAnalyzer() {
+  const [activeTab, setActiveTab] = useState("summary");
+
+  const [summary, setSummary] = useState({
+    owner: "", address: "",
+    saleDate: "", salePrice: "", deedBook: "",
+    taxValue: "", taxBill: "", marketValue: "", salesPrice: "",
+    offerPrice: "", downPmt: "",
+    finishedSF: "", roomCount: "", yearBuilt: "", style: "",
+    heat: "", extWalls: "", moreBlds: "",
+  });
+  const [narratives, setNarratives] = useState([{ date: "", text: "" }, { date: "", text: "" }, { date: "", text: "" }, { date: "", text: "" }]);
+
+  const [rentRoll, setRentRoll] = useState(makeRentRoll);
+
+  const [analyzer, setAnalyzer] = useState({
+    offerPrice: "", downPmt: "", closingCost: "",
+    financeAmt: "", interestRate: "", termYears: "",
+    rentalIncome: "", vacancy: "",
+    hoa: "", mgmtPct: "", insurance: "", taxes: "",
+    repairsPct: "", utilities: "", others: "", miscPct: "",
+    targetCF: "",
+  });
+
+  const [buildings, setBuildings] = useState(makeBuildings);
+  const [rehab, setRehab] = useState(defaultRehab);
+  const [quickEstimate, setQuickEstimate] = useState("");
+
+  const [flipping, setFlipping] = useState({
+    arv: "", desiredProfit: "", closingCost: "", holdingCost: "",
+    arv70: "", financeAmt: "", interestRate: "", termYears: "",
+  });
+
+  const rehabTotal = useMemo(() => {
+    let total = p(quickEstimate);
+    Object.values(rehab).forEach((section) =>
+      section.forEach((item) => { total += p(item.qty) * p(item.cost); })
+    );
+    return total;
+  }, [rehab, quickEstimate]);
+
+  const rentRollTotals = useMemo(() => {
+    return rentRoll.map((row) => p(row.b1) + p(row.b2) + p(row.b3));
+  }, [rentRoll]);
+
+  useEffect(() => {
+    const hoaIdx = rentRoll.findIndex((r) => r.name === "HOA");
+    const otherIdx = rentRoll.findIndex((r) => r.name === "Other");
+    setAnalyzer((prev) => ({
+      ...prev,
+      hoa: hoaIdx >= 0 ? String(rentRollTotals[hoaIdx]) : prev.hoa,
+      others: otherIdx >= 0 ? String(rentRollTotals[otherIdx]) : prev.others,
+    }));
+  }, [rentRollTotals, rentRoll]);
+
+  const calcs = useMemo(() => {
+    const offerPrice = p(analyzer.offerPrice);
+    const downPmt = p(analyzer.downPmt);
+    const closingCost = p(analyzer.closingCost);
+    const totalInvestment = downPmt + closingCost + rehabTotal;
+    const financeAmt = p(analyzer.financeAmt);
+    const annualRate = p(analyzer.interestRate) / 100;
+    const monthlyRate = annualRate / 12;
+    const termYears = p(analyzer.termYears);
+    const totalPayments = termYears * 12;
+    const monthlyPmt = monthlyRate > 0 && totalPayments > 0
+      ? (financeAmt * monthlyRate * Math.pow(1 + monthlyRate, totalPayments)) / (Math.pow(1 + monthlyRate, totalPayments) - 1)
+      : 0;
+    const totalRepayment = monthlyPmt * totalPayments;
+    const totalInterest = totalRepayment - financeAmt;
+    const monthlyIncome = p(analyzer.rentalIncome);
+    const annualIncome = monthlyIncome * 12;
+    const vacancyPct = p(analyzer.vacancy) / 100;
+    const vacancyLoss = annualIncome * vacancyPct * -1;
+    const egi = annualIncome + vacancyLoss;
+    const hoa = p(analyzer.hoa) * 12;
+    const mgmt = egi * (p(analyzer.mgmtPct) / 100);
+    const insurance = p(analyzer.insurance) * 12;
+    const taxes = p(analyzer.taxes) * 12;
+    const repairs = egi * (p(analyzer.repairsPct) / 100);
+    const utilities = p(analyzer.utilities) * 12;
+    const others = p(analyzer.others) * 12;
+    const misc = egi * (p(analyzer.miscPct) / 100);
+    const totalExpense = hoa + mgmt + insurance + taxes + repairs + utilities + others + misc;
+    const noi = egi - totalExpense;
+    const annualDebt = monthlyPmt * -12;
+    const cashFlow = noi + annualDebt;
+    const coc = totalInvestment > 0 ? cashFlow / totalInvestment : 0;
+    const grm = annualIncome > 0 ? offerPrice / annualIncome : 0;
+    const maxPurchase1pct = monthlyIncome * 67;
+    const maxExpense50 = annualIncome * 0.5;
+    const dcr = annualDebt !== 0 ? noi / (annualDebt * -1) : 0;
+    return { offerPrice, totalInvestment, financeAmt, monthlyRate, totalPayments, monthlyPmt, totalRepayment, totalInterest, annualIncome, vacancyLoss, vacancyPct, egi, hoa, mgmt, insurance, taxes, repairs, utilities, others, misc, totalExpense, noi, annualDebt, cashFlow, coc, grm, maxPurchase1pct, maxExpense50, dcr };
+  }, [analyzer, rehabTotal]);
+
+  const amortSchedule = useMemo(() => {
+    const rows = [];
+    let balance = calcs.financeAmt;
+    const n = calcs.totalPayments;
+    const rate = calcs.monthlyRate;
+    const pmt = calcs.monthlyPmt;
+    if (n <= 0 || rate <= 0 || pmt <= 0) return rows;
+    for (let i = 1; i <= Math.min(n, 360); i++) {
+      const interest = balance * rate;
+      const principal = pmt - interest;
+      const ending = balance - principal;
+      rows.push({ month: i, beginning: balance, payment: pmt, interest, principal, ending: Math.max(ending, 0) });
+      balance = ending;
+      if (balance <= 0) break;
+    }
+    return rows;
+  }, [calcs]);
+
+  const flipCalcs = useMemo(() => {
+    const arv = p(flipping.arv);
+    const profit = p(flipping.desiredProfit);
+    const closing = p(flipping.closingCost);
+    const holding = p(flipping.holdingCost);
+    const maxPurchase = arv - profit - closing - rehabTotal - holding;
+    const arv70 = p(flipping.arv70);
+    const arv70result = arv70 * 0.7;
+    const maxPurchase70 = arv70result - rehabTotal;
+    const finAmt = p(flipping.financeAmt);
+    const rate = p(flipping.interestRate) / 100 / 12;
+    const term = p(flipping.termYears) * 12;
+    const flipPmt = rate > 0 && term > 0
+      ? (finAmt * rate * Math.pow(1 + rate, term)) / (Math.pow(1 + rate, term) - 1)
+      : 0;
+    return { maxPurchase, arv70result, maxPurchase70, flipPmt, totalPayments: term };
+  }, [flipping, rehabTotal]);
+
+  const updateSummary = useCallback((k, v) => setSummary((s) => ({ ...s, [k]: v })), []);
+  const updateAnalyzer = useCallback((k, v) => setAnalyzer((s) => ({ ...s, [k]: v })), []);
+  const updateFlipping = useCallback((k, v) => setFlipping((s) => ({ ...s, [k]: v })), []);
+  const updateRentRow = useCallback((idx, field, val) => {
+    setRentRoll((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: val } : r)));
+  }, []);
+  const updateBuilding = useCallback((idx, field, val) => {
+    setBuildings((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: val } : r)));
+  }, []);
+  const updateRehab = useCallback((section, idx, field, val) => {
+    setRehab((prev) => ({
+      ...prev,
+      [section]: prev[section].map((item, i) => (i === idx ? { ...item, [field]: val } : item)),
+    }));
+  }, []);
+
+  const ClearBtn = ({ onClick }) => (
+    <button onClick={onClick} className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100" style={{cursor:"pointer", transition:"all 0.15s"}}>
+      <span style={{fontSize:"14px"}}>{"\u2715"}</span> Clear Tab
+    </button>
+  );
+
+  const clearSummary = () => {
+    setSummary({ owner: "", address: "", saleDate: "", salePrice: "", deedBook: "", taxValue: "", taxBill: "", marketValue: "", salesPrice: "", offerPrice: "", downPmt: "", finishedSF: "", roomCount: "", yearBuilt: "", style: "", heat: "", extWalls: "", moreBlds: "" });
+    setNarratives([{ date: "", text: "" }, { date: "", text: "" }, { date: "", text: "" }, { date: "", text: "" }]);
+  };
+  const clearRentRoll = () => setRentRoll(makeRentRoll());
+  const clearAnalyzer = () => setAnalyzer({ offerPrice: "", downPmt: "", closingCost: "", financeAmt: "", interestRate: "", termYears: "", rentalIncome: "", vacancy: "", hoa: "", mgmtPct: "", insurance: "", taxes: "", repairsPct: "", utilities: "", others: "", miscPct: "", targetCF: "" });
+  const clearBuildings = () => setBuildings(makeBuildings());
+  const clearRehab = () => { setRehab(JSON.parse(JSON.stringify(defaultRehab))); setQuickEstimate(""); };
+  const clearFlipping = () => setFlipping({ arv: "", desiredProfit: "", closingCost: "", holdingCost: "", arv70: "", financeAmt: "", interestRate: "", termYears: "" });
+
+  // Section-level clear functions
+  const clearOwnerInfo = () => setSummary((s) => ({ ...s, owner: "", address: "", saleDate: "", salePrice: "", deedBook: "" }));
+  const clearPropertyValue = () => setSummary((s) => ({ ...s, taxValue: "", taxBill: "", marketValue: "", salesPrice: "", offerPrice: "", downPmt: "" }));
+  const clearBuildingInfo = () => setSummary((s) => ({ ...s, finishedSF: "", roomCount: "", yearBuilt: "", style: "", heat: "", extWalls: "", moreBlds: "" }));
+  const clearNarratives = () => setNarratives([{ date: "", text: "" }, { date: "", text: "" }, { date: "", text: "" }, { date: "", text: "" }]);
+  const clearInvestment = () => setAnalyzer((s) => ({ ...s, offerPrice: "", downPmt: "", closingCost: "" }));
+  const clearLoan = () => setAnalyzer((s) => ({ ...s, financeAmt: "", interestRate: "", termYears: "" }));
+  const clearIncome = () => setAnalyzer((s) => ({ ...s, rentalIncome: "", vacancy: "" }));
+  const clearExpenses = () => setAnalyzer((s) => ({ ...s, hoa: "", mgmtPct: "", insurance: "", taxes: "", repairsPct: "", utilities: "", others: "", miscPct: "" }));
+  const clearTargets = () => setAnalyzer((s) => ({ ...s, targetCF: "" }));
+  const clearQuickEst = () => setQuickEstimate("");
+  const clearExterior = () => setRehab((prev) => ({ ...prev, exterior: JSON.parse(JSON.stringify(defaultRehab.exterior)) }));
+  const clearKitchen = () => setRehab((prev) => ({ ...prev, kitchen: JSON.parse(JSON.stringify(defaultRehab.kitchen)) }));
+  const clearBathroom = () => setRehab((prev) => ({ ...prev, bathroom: JSON.parse(JSON.stringify(defaultRehab.bathroom)) }));
+  const clearGeneral = () => setRehab((prev) => ({ ...prev, general: JSON.parse(JSON.stringify(defaultRehab.general)) }));
+  const clearFlipBreakdown = () => setFlipping((s) => ({ ...s, arv: "", desiredProfit: "", closingCost: "", holdingCost: "" }));
+  const clearFlip70 = () => setFlipping((s) => ({ ...s, arv70: "" }));
+  const clearFlipLoan = () => setFlipping((s) => ({ ...s, financeAmt: "", interestRate: "", termYears: "" }));
+
+  // TAB: Summary
+  const renderSummary = () => (
+    <div>
+      <div className="flex justify-end mb-3"><ClearBtn onClick={clearSummary} /></div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <Section title="OWNER INFORMATION" color="blue" onClear={clearOwnerInfo}>
+        <InputField label="Owner:" value={summary.owner} onChange={(v) => updateSummary("owner", v)} />
+        <InputField label="Address:" value={summary.address} onChange={(v) => updateSummary("address", v)} className="mt-2" />
+        <div className="mt-3 pt-2 border-t border-gray-100">
+          <div className="text-xs font-bold text-gray-500 mb-2">SALES HISTORY</div>
+          <InputField label="Sale Date:" value={summary.saleDate} onChange={(v) => updateSummary("saleDate", v)} type="date" />
+          <InputField label="Sale Price:" value={summary.salePrice} onChange={(v) => updateSummary("salePrice", v)} prefix="$" className="mt-1" />
+          <InputField label="Deed Book:" value={summary.deedBook} onChange={(v) => updateSummary("deedBook", v)} className="mt-1" />
+        </div>
+      </Section>
+      <Section title="PROPERTY VALUE" color="green" onClear={clearPropertyValue}>
+        <InputField label="Tax Value:" value={summary.taxValue} onChange={(v) => updateSummary("taxValue", v)} prefix="$" />
+        <InputField label="Tax Bill:" value={summary.taxBill} onChange={(v) => updateSummary("taxBill", v)} prefix="$" className="mt-1" />
+        <InputField label="Market Value:" value={summary.marketValue} onChange={(v) => updateSummary("marketValue", v)} prefix="$" className="mt-1" />
+        <InputField label="Sales Price:" value={summary.salesPrice} onChange={(v) => updateSummary("salesPrice", v)} prefix="$" className="mt-1" />
+        <div className="mt-3 pt-2 border-t border-gray-100">
+          <InputField label="Offer Price:*" value={summary.offerPrice} onChange={(v) => { updateSummary("offerPrice", v); updateAnalyzer("offerPrice", v); }} prefix="$" />
+          <InputField label="Down Pmt:*" value={summary.downPmt} onChange={(v) => { updateSummary("downPmt", v); updateAnalyzer("downPmt", v); }} prefix="$" className="mt-1" />
+          <Row label="Rehab Cost:" value={fmt(rehabTotal, "currencyInt")} bold />
+        </div>
+      </Section>
+      <Section title="BUILDING INFORMATION" color="purple" onClear={clearBuildingInfo}>
+        <InputField label="Finished SF:" value={summary.finishedSF} onChange={(v) => updateSummary("finishedSF", v)} />
+        <InputField label="Room Count:" value={summary.roomCount} onChange={(v) => updateSummary("roomCount", v)} className="mt-1" />
+        <InputField label="Year Built:" value={summary.yearBuilt} onChange={(v) => updateSummary("yearBuilt", v)} className="mt-1" />
+        <InputField label="Style:" value={summary.style} onChange={(v) => updateSummary("style", v)} className="mt-1" />
+        <InputField label="Heat:" value={summary.heat} onChange={(v) => updateSummary("heat", v)} className="mt-1" />
+        <InputField label="Ext. Walls:" value={summary.extWalls} onChange={(v) => updateSummary("extWalls", v)} className="mt-1" />
+        <InputField label="More Blds:" value={summary.moreBlds} onChange={(v) => updateSummary("moreBlds", v)} className="mt-1" />
+      </Section>
+      <div className="lg:col-span-3">
+        <Section title="NARRATIVES" color="gray" onClear={clearNarratives}>
+          <div>
+            {narratives.map((n, i) => (
+              <div key={i} className="flex gap-2 items-start mb-2">
+                <input type="date" value={n.date} onChange={(e) => setNarratives((prev) => prev.map((x, j) => (j === i ? { ...x, date: e.target.value } : x)))} className="border border-gray-300 rounded px-2 py-1 text-sm" style={{width:"144px"}} />
+                <input type="text" value={n.text} onChange={(e) => setNarratives((prev) => prev.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm" placeholder="Enter narrative..." />
+              </div>
+            ))}
+          </div>
+        </Section>
+      </div>
+    </div>
+    </div>
+  );
+
+  // TAB: Rent Roll
+  const renderRentRoll = () => (
+    <div>
+    <div className="flex justify-end mb-3"><ClearBtn onClick={clearRentRoll} /></div>
+    <Section title="RENT ROLL" color="blue" onClear={clearRentRoll}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50">
+              <th className="text-left p-2 font-semibold text-gray-600" style={{width:"128px"}}>Item</th>
+              <th className="text-right p-2 font-semibold text-gray-600">Building 1</th>
+              <th className="text-right p-2 font-semibold text-gray-600">Building 2</th>
+              <th className="text-right p-2 font-semibold text-gray-600">Building 3</th>
+              <th className="text-right p-2 font-semibold text-gray-600 bg-blue-50">Totals</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rentRoll.map((row, i) => (
+              <tr key={i} className={"border-t border-gray-100 " + (row.name === "Rent" ? "bg-green-50" : "")}>
+                <td className="p-2 font-medium text-gray-700">{row.name}</td>
+                {["b1", "b2", "b3"].map((col) => (
+                  <td key={col} className="p-1">
+                    <input type="number" value={row[col]} onChange={(e) => updateRentRow(i, col, e.target.value)} className="w-full text-right border border-gray-200 rounded px-2 py-1 text-sm" placeholder="0" />
+                  </td>
+                ))}
+                <td className="p-2 text-right font-mono font-bold bg-blue-50">{fmt(rentRollTotals[i], "currencyInt")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+    </div>
+  );
+
+  // TAB: Analyzer
+  const renderAnalyzer = () => (
+    <div>
+    <div className="flex justify-end mb-3"><ClearBtn onClick={clearAnalyzer} /></div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div>
+        <Section title="INVESTMENT INFORMATION" color="blue" onClear={clearInvestment}>
+          <InputField label="Offer Price:*" value={analyzer.offerPrice} onChange={(v) => updateAnalyzer("offerPrice", v)} prefix="$" />
+          <InputField label="Down Payment:*" value={analyzer.downPmt} onChange={(v) => updateAnalyzer("downPmt", v)} prefix="$" className="mt-1" />
+          <InputField label="Closing Cost:" value={analyzer.closingCost} onChange={(v) => updateAnalyzer("closingCost", v)} prefix="$" className="mt-1" />
+          <Row label="Rehab Cost:" value={fmt(rehabTotal, "currencyInt")} />
+          <Row label="Total Investment:" value={fmt(calcs.totalInvestment, "currency")} bold border />
+        </Section>
+        <Section title="LOAN ASSUMPTIONS" color="indigo" onClear={clearLoan}>
+          <InputField label="Finance Amount:" value={analyzer.financeAmt} onChange={(v) => updateAnalyzer("financeAmt", v)} prefix="$" />
+          <InputField label="Interest Rate (APR):" value={analyzer.interestRate} onChange={(v) => updateAnalyzer("interestRate", v)} suffix="%" className="mt-1" />
+          <Row label="Monthly Interest Rate:" value={fmt(calcs.monthlyRate * 100, "number") + "%"} />
+          <InputField label="Term (Years):" value={analyzer.termYears} onChange={(v) => updateAnalyzer("termYears", v)} className="mt-1" />
+          <Row label="Total Payments:" value={calcs.totalPayments} />
+          <Row label="Monthly Payment:" value={fmt(calcs.monthlyPmt, "currency")} bold />
+          <Row label="Total Repayment:" value={fmt(calcs.totalRepayment, "currency")} />
+          <Row label="Total Interest:" value={fmt(calcs.totalInterest, "currency")} />
+        </Section>
+      </div>
+      <div>
+        <Section title="INCOME INFORMATION" color="green" onClear={clearIncome}>
+          <div className="flex justify-between text-xs font-bold text-gray-500 mb-1 px-1">
+            <span>Item</span><div className="flex gap-8"><span>Monthly</span><span>Annual</span><span>%</span></div>
+          </div>
+          <InputField label="Rental Income:" value={analyzer.rentalIncome} onChange={(v) => updateAnalyzer("rentalIncome", v)} prefix="$" />
+          <Row label="  Annual Income:" value={fmt(calcs.annualIncome, "currency")} />
+          <InputField label="Vacancy (%):" value={analyzer.vacancy} onChange={(v) => updateAnalyzer("vacancy", v)} suffix="%" className="mt-1" />
+          <Row label="  Vacancy Loss:" value={fmt(calcs.vacancyLoss, "currency")} />
+          <Row label="Effective Gross Income:" value={fmt(calcs.egi, "currency")} bold border />
+        </Section>
+        <Section title="OPERATING EXPENSES" color="amber" onClear={clearExpenses}>
+          <InputField label="HOA (monthly):" value={analyzer.hoa} onChange={(v) => updateAnalyzer("hoa", v)} prefix="$" />
+          <InputField label="Mgmt (% of EGI):" value={analyzer.mgmtPct} onChange={(v) => updateAnalyzer("mgmtPct", v)} suffix="%" className="mt-1" />
+          <InputField label="Insurance (mo):" value={analyzer.insurance} onChange={(v) => updateAnalyzer("insurance", v)} prefix="$" className="mt-1" />
+          <InputField label="Taxes (monthly):" value={analyzer.taxes} onChange={(v) => updateAnalyzer("taxes", v)} prefix="$" className="mt-1" />
+          <InputField label="Repairs (% EGI):" value={analyzer.repairsPct} onChange={(v) => updateAnalyzer("repairsPct", v)} suffix="%" className="mt-1" />
+          <InputField label="Utilities (mo):" value={analyzer.utilities} onChange={(v) => updateAnalyzer("utilities", v)} prefix="$" className="mt-1" />
+          <InputField label="Others (monthly):" value={analyzer.others} onChange={(v) => updateAnalyzer("others", v)} prefix="$" className="mt-1" />
+          <InputField label="Misc (% of EGI):" value={analyzer.miscPct} onChange={(v) => updateAnalyzer("miscPct", v)} suffix="%" className="mt-1" />
+          <Row label="Total Operating Expense:" value={fmt(calcs.totalExpense, "currency")} bold border />
+          <Row label="NOI (EGI - Expense):" value={fmt(calcs.noi, "currency")} bold highlight />
+          <Row label="Debt Service (P&I Annual):" value={fmt(calcs.annualDebt, "currency")} />
+          <Row label="Cash Flow (NOI - Mortgage):" value={fmt(calcs.cashFlow, "currency")} bold highlight />
+        </Section>
+      </div>
+      <div className="lg:col-span-2">
+        <Section title="PROPERTY ANALYZER \u2014 KEY TARGETS vs ACTUAL" color="red" onClear={clearTargets}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {[
+              { label: "Cash Flow", target: "$" + p(analyzer.targetCF).toLocaleString() + "+", actual: fmt(calcs.cashFlow, "currency"), pass: calcs.cashFlow >= p(analyzer.targetCF) },
+              { label: "Cash on Cash", target: "> 15%", actual: fmt(calcs.coc, "pct"), pass: calcs.coc >= 0.15 },
+              { label: "Gross Rent Multiplier", target: "< 6", actual: calcs.grm.toFixed(2), pass: calcs.grm > 0 && calcs.grm < 6 },
+              { label: "1%-2% Rule (Max Purchase)", target: fmt(calcs.maxPurchase1pct, "currencyInt"), actual: fmt(calcs.offerPrice, "currencyInt"), pass: calcs.offerPrice <= calcs.maxPurchase1pct },
+              { label: "50% Rule (Max Expense)", target: fmt(calcs.maxExpense50, "currencyInt"), actual: fmt(calcs.totalExpense, "currencyInt"), pass: calcs.totalExpense <= calcs.maxExpense50 },
+              { label: "Debt Coverage Ratio", target: "> 1.30", actual: calcs.dcr.toFixed(2), pass: calcs.dcr >= 1.3 },
+            ].map((item, i) => (
+              <div key={i} className={"p-3 rounded-lg border-2 " + (item.pass ? "border-green-300 bg-green-50" : "border-red-300 bg-red-50")}>
+                <div className="text-xs font-bold text-gray-500 uppercase">{item.label}</div>
+                <div className="flex justify-between mt-1">
+                  <div className="text-xs text-gray-400">Target: {item.target}</div>
+                  <div className={"text-lg font-bold " + (item.pass ? "text-green-700" : "text-red-700")}>
+                    {item.pass ? "\u2713" : "\u2717"} {item.actual}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      </div>
+    </div>
+    </div>
+  );
+
+  // TAB: Buildings
+  const renderBuildings = () => (
+    <div>
+    <div className="flex justify-end mb-3"><ClearBtn onClick={clearBuildings} /></div>
+    <Section title="BUILDING INFORMATION" color="purple" onClear={clearBuildings}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50">
+              <th className="text-left p-2 font-semibold text-gray-600" style={{width:"144px"}}>Detail</th>
+              <th className="text-center p-2 font-semibold text-gray-600">Building 1</th>
+              <th className="text-center p-2 font-semibold text-gray-600">Building 2</th>
+              <th className="text-center p-2 font-semibold text-gray-600">Building 3</th>
+            </tr>
+          </thead>
+          <tbody>
+            {buildings.map((row, i) => (
+              <tr key={i} className="border-t border-gray-100">
+                <td className="p-2 font-medium text-gray-700">{row.name}</td>
+                {["b1", "b2", "b3"].map((col) => (
+                  <td key={col} className="p-1">
+                    <input type="text" value={row[col]} onChange={(e) => updateBuilding(i, col, e.target.value)} className="w-full text-center border border-gray-200 rounded px-2 py-1 text-sm" placeholder="\u2014" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+    </div>
+  );
+
+  // TAB: Rehab
+  const renderRehabSection = (title, sectionKey, color, onClear) => (
+    <Section title={title} color={color} onClear={onClear}>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-xs text-gray-500">
+            <th className="text-left p-1" style={{width:"160px"}}>Description</th>
+            <th className="text-right p-1" style={{width:"80px"}}>Item #</th>
+            <th className="text-right p-1" style={{width:"64px"}}>Qty</th>
+            <th className="text-right p-1" style={{width:"80px"}}>Cost</th>
+            <th className="text-right p-1" style={{width:"96px"}}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rehab[sectionKey].map((item, i) => {
+            const total = p(item.qty) * p(item.cost);
+            return (
+              <tr key={i} className="border-t border-gray-50">
+                <td className="p-1">
+                  <input type="text" value={item.desc} onChange={(e) => updateRehab(sectionKey, i, "desc", e.target.value)} className="w-full border border-gray-200 rounded px-1 py-0.5 text-sm" />
+                </td>
+                <td className="p-1">
+                  <input type="text" value={item.itemNo || ""} onChange={(e) => updateRehab(sectionKey, i, "itemNo", e.target.value)} className="w-full text-right border border-gray-200 rounded px-1 py-0.5 text-sm" />
+                </td>
+                <td className="p-1">
+                  <input type="number" value={item.qty} onChange={(e) => updateRehab(sectionKey, i, "qty", e.target.value)} className="w-full text-right border border-gray-200 rounded px-1 py-0.5 text-sm" placeholder="0" />
+                </td>
+                <td className="p-1">
+                  <input type="number" value={item.cost} onChange={(e) => updateRehab(sectionKey, i, "cost", e.target.value)} className="w-full text-right border border-gray-200 rounded px-1 py-0.5 text-sm" placeholder="$0" />
+                </td>
+                <td className="p-1 text-right font-mono text-sm">{total > 0 ? fmt(total, "currencyInt") : "\u2014"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Section>
+  );
+
+  const renderRehab = () => (
+    <div>
+      <div className="flex justify-end mb-3"><ClearBtn onClick={clearRehab} /></div>
+      <div className="mb-4 p-4 text-white rounded-lg flex justify-between items-center" style={{background:"linear-gradient(to right, #f59e0b, #d97706)"}}>
+        <div>
+          <div className="text-sm font-medium opacity-80">Total Rehab Cost</div>
+          <div className="text-3xl font-bold">{fmt(rehabTotal, "currencyInt")}</div>
+        </div>
+        <div>
+          <label className="text-sm opacity-80 block mb-1">Quick Estimate</label>
+          <input type="number" value={quickEstimate} onChange={(e) => setQuickEstimate(e.target.value)} className="border border-white border-opacity-30 rounded px-3 py-1 text-white placeholder-white placeholder-opacity-50 text-right" style={{width:"128px", background:"rgba(255,255,255,0.2)"}} placeholder="$0" />
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {renderRehabSection("EXTERIOR", "exterior", "blue", clearExterior)}
+        {renderRehabSection("KITCHEN", "kitchen", "green", clearKitchen)}
+        {renderRehabSection("BATHROOM", "bathroom", "purple", clearBathroom)}
+        {renderRehabSection("GENERAL", "general", "amber", clearGeneral)}
+      </div>
+    </div>
+  );
+
+  // TAB: Amortization
+  const [amortPage, setAmortPage] = useState(0);
+  const [amortView, setAmortView] = useState("monthly");
+  const pageSize = 24;
+
+  const annualSummary = useMemo(() => {
+    if (amortSchedule.length === 0) return [];
+    const years = [];
+    const totalYears = Math.ceil(amortSchedule.length / 12);
+    for (let yr = 1; yr <= totalYears; yr++) {
+      const monthRows = amortSchedule.filter((r) => r.month > (yr - 1) * 12 && r.month <= yr * 12);
+      if (monthRows.length === 0) continue;
+      const totalPmt = monthRows.reduce((s, r) => s + r.payment, 0);
+      const totalInt = monthRows.reduce((s, r) => s + r.interest, 0);
+      const totalPrin = monthRows.reduce((s, r) => s + r.principal, 0);
+      years.push({ year: yr, beginning: monthRows[0].beginning, payment: totalPmt, interest: totalInt, principal: totalPrin, ending: monthRows[monthRows.length - 1].ending });
+    }
+    return years;
+  }, [amortSchedule]);
+
+  const clearAmortization = () => {
+    setAnalyzer((prev) => ({ ...prev, financeAmt: "", interestRate: "", termYears: "" }));
+    setAmortPage(0); setAmortView("monthly");
+  };
+
+  const renderAmortization = () => {
+    const totalInterestPaid = amortSchedule.reduce((s, r) => s + r.interest, 0);
+    const totalPrincipalPaid = amortSchedule.reduce((s, r) => s + r.principal, 0);
+    const isAnnual = amortView === "annual";
+    const displayData = isAnnual ? annualSummary : amortSchedule;
+    const pages = isAnnual ? 1 : Math.ceil(amortSchedule.length / pageSize);
+    const slice = isAnnual ? annualSummary : amortSchedule.slice(amortPage * pageSize, (amortPage + 1) * pageSize);
+    return (
+      <div>
+        <div className="flex justify-end mb-3"><ClearBtn onClick={clearAmortization} /></div>
+        <div className="mb-4 p-4 text-white rounded-lg grid grid-cols-3 gap-4 text-center" style={{background:"linear-gradient(to right, #4f46e5, #4338ca)"}}>
+          <div><div className="text-xs opacity-70">Total Interest</div><div className="text-xl font-bold">{fmt(totalInterestPaid, "currencyInt")}</div></div>
+          <div><div className="text-xs opacity-70">Total Principal</div><div className="text-xl font-bold">{fmt(totalPrincipalPaid, "currencyInt")}</div></div>
+          <div><div className="text-xs opacity-70">Monthly Payment</div><div className="text-xl font-bold">{fmt(calcs.monthlyPmt, "currency")}</div></div>
+        </div>
+        <Section title="AMORTIZATION SCHEDULE" color="indigo" onClear={clearAmortization}>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-sm font-medium text-gray-600">View:</span>
+            <button onClick={() => { setAmortView("monthly"); setAmortPage(0); }} className={"px-3 py-1 text-sm rounded-full font-medium " + (amortView === "monthly" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")} style={{cursor:"pointer"}}>Monthly</button>
+            <button onClick={() => { setAmortView("annual"); setAmortPage(0); }} className={"px-3 py-1 text-sm rounded-full font-medium " + (amortView === "annual" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")} style={{cursor:"pointer"}}>Annual</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-xs text-gray-500 font-semibold">
+                  <th className="p-2 text-center">{isAnnual ? "Year" : "Month"}</th>
+                  <th className="p-2 text-right">Beginning Balance</th>
+                  <th className="p-2 text-right">{isAnnual ? "Total Payments" : "Payment"}</th>
+                  <th className="p-2 text-right">{isAnnual ? "Total Interest" : "Interest"}</th>
+                  <th className="p-2 text-right">{isAnnual ? "Total Principal" : "Principal"}</th>
+                  <th className="p-2 text-right">Ending Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isAnnual ? annualSummary.map((row) => (
+                  <tr key={row.year} className={"border-t border-gray-50 " + (row.year % 5 === 0 ? "bg-blue-50 font-semibold" : "")}>
+                    <td className="p-1 text-center text-gray-500 font-semibold">Year {row.year}</td>
+                    <td className="p-1 text-right font-mono">{fmt(row.beginning, "currency")}</td>
+                    <td className="p-1 text-right font-mono">{fmt(row.payment, "currency")}</td>
+                    <td className="p-1 text-right font-mono text-red-600">{fmt(row.interest, "currency")}</td>
+                    <td className="p-1 text-right font-mono text-green-600">{fmt(row.principal, "currency")}</td>
+                    <td className="p-1 text-right font-mono">{fmt(row.ending, "currency")}</td>
+                  </tr>
+                )) : slice.map((row) => (
+                  <tr key={row.month} className={"border-t border-gray-50 " + (row.month % 12 === 0 ? "bg-blue-50 font-semibold" : "")}>
+                    <td className="p-1 text-center text-gray-500">{row.month}{row.month % 12 === 0 ? " (Yr " + (row.month / 12) + ")" : ""}</td>
+                    <td className="p-1 text-right font-mono">{fmt(row.beginning, "currency")}</td>
+                    <td className="p-1 text-right font-mono">{fmt(row.payment, "currency")}</td>
+                    <td className="p-1 text-right font-mono text-red-600">{fmt(row.interest, "currency")}</td>
+                    <td className="p-1 text-right font-mono text-green-600">{fmt(row.principal, "currency")}</td>
+                    <td className="p-1 text-right font-mono">{fmt(row.ending, "currency")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!isAnnual && pages > 1 && (
+            <div className="flex justify-center gap-1 mt-3 flex-wrap">
+              {Array.from({ length: pages }, (_, i) => (
+                <button key={i} onClick={() => setAmortPage(i)} className={"px-2 py-1 text-xs rounded " + (amortPage === i ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")} style={{cursor:"pointer"}}>
+                  {i * pageSize + 1}-{Math.min((i + 1) * pageSize, amortSchedule.length)}
+                </button>
+              ))}
+            </div>
+          )}
+        </Section>
+      </div>
+    );
+  };
+
+  // TAB: Flipping
+  const renderFlipping = () => (
+    <div>
+    <div className="flex justify-end mb-3"><ClearBtn onClick={clearFlipping} /></div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <Section title="FLIP ANALYSIS BREAKDOWN" color="amber" onClear={clearFlipBreakdown}>
+        <InputField label="After Repair Value:" value={flipping.arv} onChange={(v) => updateFlipping("arv", v)} prefix="$" />
+        <InputField label="Desired Profit:" value={flipping.desiredProfit} onChange={(v) => updateFlipping("desiredProfit", v)} prefix="$" className="mt-1" />
+        <InputField label="Closing Cost (Buy+Sell):" value={flipping.closingCost} onChange={(v) => updateFlipping("closingCost", v)} prefix="$" className="mt-1" />
+        <Row label="Rehab Cost:" value={fmt(rehabTotal, "currencyInt")} />
+        <InputField label="Holding Cost & Misc:" value={flipping.holdingCost} onChange={(v) => updateFlipping("holdingCost", v)} prefix="$" className="mt-1" />
+        <Row label="Maximum Purchase Price:" value={fmt(flipCalcs.maxPurchase, "currencyInt")} bold highlight border />
+      </Section>
+      <Section title="QUICK 70% RULE" color="red" onClear={clearFlip70}>
+        <InputField label="After Repair Value:" value={flipping.arv70} onChange={(v) => updateFlipping("arv70", v)} prefix="$" />
+        <Row label="x 70%:" value={fmt(flipCalcs.arv70result, "currencyInt")} />
+        <Row label="Less Rehab Cost:" value={fmt(rehabTotal * -1, "currencyInt")} />
+        <Row label="Maximum Purchase Price:" value={fmt(flipCalcs.maxPurchase70, "currencyInt")} bold highlight border />
+      </Section>
+      <div className="lg:col-span-2">
+        <Section title="FLIP LOAN ASSUMPTIONS" color="indigo" onClear={clearFlipLoan}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <InputField label="Finance Amount:" value={flipping.financeAmt} onChange={(v) => updateFlipping("financeAmt", v)} prefix="$" />
+              <InputField label="Interest Rate (APR):" value={flipping.interestRate} onChange={(v) => updateFlipping("interestRate", v)} suffix="%" className="mt-1" />
+            </div>
+            <div>
+              <InputField label="Term (Years):" value={flipping.termYears} onChange={(v) => updateFlipping("termYears", v)} />
+              <Row label="Total Payments:" value={flipCalcs.totalPayments} />
+              <Row label="Monthly Payment:" value={fmt(flipCalcs.flipPmt, "currency")} bold />
+            </div>
+          </div>
+        </Section>
+      </div>
+    </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="text-white px-4 py-3" style={{background:"linear-gradient(to right, #1f2937, #111827)"}}>
+        <div className="mx-auto flex items-center justify-between" style={{maxWidth:"1280px"}}>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">PROPERTY ANALYZER</h1>
+            <p className="text-xs text-gray-400 mt-0">{summary.address || "Enter property address"}</p>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-gray-400">Offer Price</div>
+            <div className="text-lg font-bold text-green-400">{fmt(p(analyzer.offerPrice), "currencyInt")}</div>
+          </div>
+        </div>
+      </div>
+      <div className="mx-auto px-4 mt-3" style={{maxWidth:"1280px"}}>
+        <div className="flex gap-1 overflow-x-auto pb-2">
+          {tabsList.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={"flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap " +
+                (activeTab === tab.id ? "bg-white shadow-md text-gray-900 ring-1" : "text-gray-500 hover:bg-white hover:bg-opacity-60 hover:text-gray-700")}
+              style={{cursor:"pointer", transition:"all 0.15s"}}
+            >
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mx-auto px-4 py-4" style={{maxWidth:"1280px"}}>
+        {activeTab === "summary" && renderSummary()}
+        {activeTab === "rentroll" && renderRentRoll()}
+        {activeTab === "analyzer" && renderAnalyzer()}
+        {activeTab === "buildings" && renderBuildings()}
+        {activeTab === "rehab" && renderRehab()}
+        {activeTab === "amortization" && renderAmortization()}
+        {activeTab === "flipping" && renderFlipping()}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(React.createElement(PropertyAnalyzer), document.getElementById("root"));
+</script>
+</body>
+</html>
