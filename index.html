@@ -363,11 +363,11 @@ function App() {
     const s = saved.current || {};
 
     // Tab state
-    const [tab, setTab] = useState('summary');
+    const [tab, setTab] = useState('analyzer');
     const tabsList = [
+        { id: 'analyzer', label: 'Analyzer', icon: '📊' },
         { id: 'summary', label: 'Summary', icon: '🏠' },
         { id: 'rentroll', label: 'Rent Roll', icon: '📋' },
-        { id: 'analyzer', label: 'Analyzer', icon: '📊' },
         { id: 'buildings', label: 'Buildings', icon: '🏢' },
         { id: 'rehab', label: 'Rehab', icon: '🔨' },
         { id: 'amortization', label: 'Amortization', icon: '📈' },
