@@ -393,6 +393,7 @@ function App() {
     const [hoaFee, setHoaFee] = useState(s.hoaFee || '');
 
     // ─── Analyzer ───
+    const [monthlyRent, setMonthlyRent] = useState(s.monthlyRent || '');
     const [vacancyRate, setVacancyRate] = useState(s.vacancyRate || '8');
     const [managementPct, setManagementPct] = useState(s.managementPct || '10');
     const [taxes, setTaxes] = useState(s.taxes || '');
@@ -446,7 +447,7 @@ function App() {
             saveDeal({
                 propertyName, propertyAddress, askingPrice, offerPrice, downPayment, financeAmount,
                 autoCalcFinance, interestRate, loanTerm, closingCosts, units, otherIncome, hoaFee,
-                vacancyRate, managementPct, taxes, insurance, utilities, maintenance, otherExpense,
+                monthlyRent, vacancyRate, managementPct, taxes, insurance, utilities, maintenance, otherExpense,
                 quickEstimate, exterior, kitchen, bathroom, general, arvFlip, arv70, holdingMonths,
                 holdingCostMo, sellingCostPct, narratives, buildings, geminiKey
             });
@@ -455,7 +456,8 @@ function App() {
     });
 
     // ─── Computed Values ───
-    const grossRent = useMemo(() => units.reduce((s, u) => s + p(u.rent), 0) * 12, [units]);
+    const rentRollAnnual = useMemo(() => units.reduce((s, u) => s + p(u.rent), 0) * 12, [units]);
+    const grossRent = useMemo(() => p(monthlyRent) > 0 ? p(monthlyRent) * 12 : rentRollAnnual, [monthlyRent, rentRollAnnual]);
     const annualOther = useMemo(() => p(otherIncome) * 12, [otherIncome]);
     const annualHoa = useMemo(() => p(hoaFee) * 12, [hoaFee]);
     const grossIncome = grossRent + annualOther;
@@ -778,6 +780,7 @@ function App() {
         setAutoCalcFinance(true); setInterestRate('7'); setLoanTerm('30'); setClosingCosts('');
     };
     const clearIncome = () => {
+        setMonthlyRent('');
         setVacancyRate('8');
     };
     const clearExpenses = () => {
@@ -972,7 +975,7 @@ function App() {
                                     </tr>
                                 ))}
                             </tbody>
-                            <tfoot><tr className="border-t-2 border-gray-300 font-bold"><td colSpan="4">Total Monthly</td><td className="text-right">{fmt(grossRent / 12)}</td><td></td></tr></tfoot>
+                            <tfoot><tr className="border-t-2 border-gray-300 font-bold"><td colSpan="4">Total Monthly</td><td className="text-right">{fmt(rentRollAnnual / 12)}</td><td></td></tr></tfoot>
                         </table>
                         <button onClick={() => setUnits([...units, {name:`Unit ${units.length+1}`,beds:'',baths:'',sqft:'',rent:'',status:'Occupied'}])} className="mt-3 text-xs text-blue-600 hover:text-blue-800">+ Add Unit</button>
                     </Section>
@@ -1021,15 +1024,18 @@ function App() {
                         <div>
                             <Section title="Income Information" color="green" onClear={clearIncome}>
                                 <div className="space-y-3 mb-3">
+                                    <CurrencyInput label="Monthly Rent" value={monthlyRent} onChange={setMonthlyRent} prefix="$" />
                                     <Input label="Vacancy Rate" value={vacancyRate} onChange={setVacancyRate} suffix="%" />
                                 </div>
                                 <div className="bg-green-50 rounded-lg p-3">
-                                    <Row label="Gross Rental Income" value={fmt(grossRent)} />
+                                    <Row label="Gross Annual Rent" value={fmt(grossRent)} />
                                     <Row label="Other Income" value={fmt(annualOther)} />
                                     <Row label={`Vacancy Loss (${vacancyRate}%)`} value={`(${fmt(vacancyLoss)})`} />
                                     <Row label="Effective Gross Income" value={fmt(egi)} bold border />
                                 </div>
-                                <p className="text-xs text-gray-400 mt-2">Rent and other income are set on the Rent Roll tab.</p>
+                                {p(monthlyRent) > 0 && rentRollAnnual > 0 && <p className="text-xs text-amber-500 mt-2">Monthly rent overrides Rent Roll values. Clear this field to use Rent Roll instead.</p>}
+                                {p(monthlyRent) === 0 && rentRollAnnual > 0 && <p className="text-xs text-gray-400 mt-2">Using Rent Roll totals. Enter monthly rent above to override.</p>}
+                                {p(monthlyRent) === 0 && rentRollAnnual === 0 && <p className="text-xs text-gray-400 mt-2">Enter monthly rent or use the Rent Roll tab for multi-unit breakdowns.</p>}
                             </Section>
                             <Section title="Operating Expenses (Annual)" color="amber" onClear={clearExpenses}>
                                 <div className="space-y-3 mb-3">
