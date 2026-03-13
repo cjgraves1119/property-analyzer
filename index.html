@@ -906,13 +906,16 @@ function App() {
                 <Input label="Address" value={propertyAddress} onChange={setPropertyAddress} type="text" placeholder="123 Main St, City, ST" className="md:col-span-2" />
             </div>
 
-            {/* Tabs with Emoji Icons (V1 style) */}
-            <div className="flex overflow-x-auto gap-1 mb-4 bg-white rounded-xl shadow-sm p-1 no-print">
+            {/* Responsive Tabs: stacked icon+label on mobile, inline on desktop */}
+            <div className="flex overflow-x-auto gap-1 mb-4 bg-white rounded-xl shadow-sm p-1 no-print" style={{WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none'}}>
                 {tabsList.map(t => (
                     <button key={t.id} onClick={() => setTab(t.id)}
-                        className={`px-3 py-2 text-sm whitespace-nowrap rounded-lg transition-all flex items-center gap-1.5 ${tab === t.id ? 'bg-blue-600 text-white font-medium' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'}`}>
-                        <span>{t.icon}</span>
-                        <span className="hidden sm:inline">{t.label}</span>
+                        className={`flex-shrink-0 rounded-lg transition-all
+                            flex flex-col items-center px-2.5 py-1.5 min-w-[3.5rem]
+                            sm:flex-row sm:gap-1.5 sm:px-3 sm:py-2 sm:min-w-0
+                            ${tab === t.id ? 'bg-blue-600 text-white font-medium' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'}`}>
+                        <span className="text-base sm:text-sm">{t.icon}</span>
+                        <span className="text-[10px] leading-tight sm:text-sm whitespace-nowrap">{t.label}</span>
                     </button>
                 ))}
             </div>
